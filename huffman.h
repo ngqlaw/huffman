@@ -6,9 +6,8 @@
 
 typedef struct 
 {
-	unsigned int len;
+	unsigned char len;
 	unsigned int symbol;
-	int source;
 } HUFFMAN_MAP;
 
 typedef struct 
@@ -25,6 +24,5 @@ typedef struct
 	int parent_pos;
 } HUFFMAN_LEAF;
 
-int read(FILE*, unsigned int*, unsigned char*, FREQ_POS*);
-void encode(unsigned int, FREQ_POS*, HUFFMAN_MAP*);
+int encode(unsigned char*, unsigned char*);
 void decode(unsigned int, HUFFMAN_MAP*, unsigned char*, unsigned char*);
