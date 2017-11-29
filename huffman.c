@@ -27,9 +27,10 @@ unsigned int* length;
 FREQ_POS* freq;
 {
 	FILE* file;
-	unsigned char line[128];
+	unsigned char cache;
 	FREQ_POS temp_freq[256];
   unsigned int i,total;
+  int res;
 
   if( (file = fopen(filename, "rb")) == NULL ){
 		return 0;
@@ -43,17 +44,14 @@ FREQ_POS* freq;
   	freq[i].pos = 0;
   }
   total = 0;
-	while(fgets(line, 127, file) != NULL){
-		for (i = 0; i < 127; ++i)
-		{
-			if (line[i] == 0)break;
-			++(temp_freq[line[i]].freq);
-			++total;
-		}
+	while( (res = fgetc(file)) != EOF ){
+		cache = (unsigned char)res;
+		++(temp_freq[cache].freq);
+		++total;
 	}
 	if (ferror(file))
 	{
-		printf("fail to read file!");
+		printf("fail to read file!\n");
 		return 0;
 	}
 	fclose(file);
@@ -208,9 +206,10 @@ unsigned int total, length;
 HUFFMAN_MAP* map;
 {
 	FILE *infile, *outfile;
-	unsigned char line[128], cache[128], symbol, mask, p;
+	unsigned char source, cache[128], symbol, mask, p;
   unsigned int i, j, k, temp;
   unsigned char *map_cache;
+  int res;
 
   if( (infile = fopen(infilename, "rb")) == NULL ){
 		return -1;
@@ -239,80 +238,240 @@ HUFFMAN_MAP* map;
 			j += sizeof(unsigned int) + 2;
 		}
 	}
-	fwrite(map_cache, sizeof(char), j, outfile);
+	fwrite(map_cache, sizeof(unsigned char), j, outfile);
 	free(map_cache);
 	/*写入编码*/
 	j = 0;
 	mask = 0;
 	p = 0;
-	while(fgets(line, 127, infile) != NULL)
+	while( (res = fgetc(infile)) != EOF )
 	{
-		for (i = 0; i < 127; ++i)
+		source = (unsigned char)res;
+		/*字节写入*/
+		cache[j] = cache[j] & mask;
+		k = map[source].len;
+		symbol = map[source].symbol;
+		while(k)
 		{
-			if (line[i] == 0)break;
-			/*字节写入*/
-			cache[j] = cache[j] & mask;
-			k = map[line[i]].len;
-			symbol = map[line[i]].symbol;
-			while(k)
+			if ((8 - p) > k)
 			{
-				if ((8 - p) > k)
+				/* 不能补全字节 */
+				p += k;
+				cache[j] = cache[j] | (symbol << (8 - p));
+				mask = 255 << (8 - p);
+				break;
+			}
+			else if ((8 - p) < k)
+			{
+				/* 超出字节 */
+				k -= 8 - p;
+				p = 0;
+				cache[j] = cache[j] | (symbol >> k);
+				symbol = symbol & (255 >> (8 - k));
+				++j;
+				cache[j] = 0;
+				if(j == 128)
 				{
-					/* 不能补全字节 */
-					p += k;
-					cache[j] = cache[j] | (symbol << (8 - p));
-					mask = 255 << (8 - p);
-					break;
+					fwrite(cache, sizeof(unsigned char), 128, outfile);
+					j = 0;
 				}
-				else if ((8 - p) < k)
+			}
+			else
+			{
+				/* 整字节 */
+				p = 0;
+				cache[j] = cache[j] | symbol;
+				mask = 0;
+				++j;
+				if(j == 128)
 				{
-					/* 超出字节 */
-					k -= 8 - p;
-					p = 0;
-					cache[j] = cache[j] | (symbol >> k);
-					symbol = symbol & (255 >> (8 - k));
-					++j;
-					if(j == 128)
-					{
-						fwrite(cache, sizeof(char), 128, outfile);
-						j = 0;
-					}
+					fwrite(cache, sizeof(unsigned char), 128, outfile);
+					j = 0;
 				}
-				else
-				{
-					/* 整字节 */
-					p = 0;
-					cache[j] = cache[j] | symbol;
-					mask = 0;
-					++j;
-					if(j == 128)
-					{
-						fwrite(cache, sizeof(char), 128, outfile);
-						j = 0;
-					}
-					break;
-				}
+				break;
 			}
 		}
 	}
 	if (ferror(infile))
 	{
-		printf("fail to read file!");
+		printf("fail to read file!\n");
 		fclose(outfile);
 		return -1;
 	}
-	fwrite(cache, sizeof(char), j, outfile);
+	fwrite(cache, sizeof(unsigned char), j, outfile);
 	fclose(outfile);
 	fclose(infile);
 	return 0;
 }
 
-void decode(length, map, input, output)
+int read_decode_file(file, cache, length)
+FILE *file;
+unsigned char *cache;
 unsigned int length;
-HUFFMAN_MAP *map;
-unsigned char *input, *output;
 {
+	unsigned int i;
+	int res;
 
+	i = 0;
+	while( (res = fgetc(file)) != EOF )
+	{
+		cache[i] = (unsigned char)res;
+		++i;
+		if(i == length)break;
+	}
+	if (ferror(file))
+	{
+		printf("fail to read file!\n");
+		return -1;
+	}
+	else if (feof(file))
+	{
+		if(i == 0)
+		{
+			return -2;
+		}
+	}
+	return i;
+}
+
+int decode(infilename, outfilename)
+unsigned char *infilename, *outfilename;
+{
+	FILE *infile, *outfile;
+	unsigned int i, j, k, total, length, temp, mask;
+	unsigned char line[128], cache[128], p;
+	int res;
+	HUFFMAN_MAP_D *d_map, map_cache, temp_map;
+
+	if( (infile = fopen(infilename, "rb")) == NULL ){
+		printf("fail to open file:%s!\n", infilename);
+		return -1;
+	}
+	/*初始化表长度和信息长度*/
+	if ( (res = read_decode_file(infile, line, 2 * sizeof(unsigned int))) <= 0 )
+	{
+		printf("read file fail:%d\n", res);
+		return -1;
+	}
+	length = 0;
+	p = sizeof(unsigned int);
+	for(i = 0; i < p; ++i)
+	{
+		temp = line[i];
+		length += temp << (8*(p - i - 1));
+	}
+	total = 0;
+	p = 2 * sizeof(unsigned int);
+	for(; i < p; ++i)
+	{
+		temp = line[i];
+		total += temp << (8*(p - i - 1));
+	}
+	if (total == 0 || length == 0){
+		printf("error file format!\n");
+		fclose(infile);
+		return -2;
+	}
+	/*初始化huffman编码表*/
+	d_map = malloc(sizeof(HUFFMAN_MAP_D) * (length + 1));
+	for (i = 0; i < length; ++i)
+	{
+		/*读取一个映射*/
+		if ( (res = read_decode_file(infile, line, sizeof(unsigned int) + 2)) <= 0 )
+		{
+			printf("read file fail:%d\n", res);
+			free(d_map);
+			return -1;
+		}
+		map_cache.source = line[0];
+		map_cache.map.len = line[1];
+		map_cache.map.symbol = 0;
+		for(j = 2; j < 2 + sizeof(unsigned int); ++j)
+		{
+			temp = line[j];
+			map_cache.map.symbol += temp << (8*(sizeof(unsigned int) + 1 - j));
+		}
+		/*排序编码表(按编码有效长度从小到大)*/
+		for (j = 0; j < i; ++j)
+		{
+			if (map_cache.map.len < d_map[j].map.len)break;
+		}
+		for (; j < i; ++j)
+		{
+			temp_map = d_map[j];
+			d_map[j] = map_cache;
+			map_cache = temp_map;
+		}
+		d_map[j] = map_cache;
+	}
+	/*解码*/
+	if( (outfile = fopen(outfilename, "wb")) == NULL ){
+		printf("fail to open file:%s!\n", outfilename);
+		free(d_map);
+		fclose(infile);
+		return -1;
+	}
+	p = 0;
+	k = 0; 
+	mask = 0; 
+	while( (res = read_decode_file(infile, line, 127)) > 0)
+	{
+		for (i = 0; i < res; ++i)
+		{
+			if (total == 0)break;
+			if (mask > 0)
+				mask = (mask << 8) + line[i];
+			else 
+				mask = line[i];
+			p += 8;
+			while(p)
+			{
+				temp = 0;
+				for (j = 0; j < length; ++j)
+				{
+					if (d_map[j].map.len <= p)
+					{
+						if( d_map[j].map.symbol == (mask >> (p - d_map[j].map.len)) )
+						{
+							cache[k] = d_map[j].source;
+							++k;
+							--total;
+							mask -= d_map[j].map.symbol << (p - d_map[j].map.len);
+							p -= d_map[j].map.len;
+							temp = 1;
+							break;
+						}
+					}
+					else break;
+				}
+				if (k == 127)
+				{
+					fwrite(cache, sizeof(unsigned char), 127, outfile);
+					k = 0;
+				}
+				if (j == length)
+				{
+					printf("unknown code:%d\n", mask);
+					free(d_map);
+					fclose(outfile);
+					fclose(infile);
+					return -2;
+				}
+				if(temp == 0 || total == 0)break;
+			}
+		}
+	}
+	free(d_map);
+	if (res == -1)
+	{
+		printf("fail to read file!\n");
+		fclose(outfile);
+		return -1;
+	}
+	if(k > 0)fwrite(cache, sizeof(unsigned char), k, outfile);
+	fclose(outfile);
+	fclose(infile);
+	return 0;
 }
 
 int encode(infilename, outfilename)

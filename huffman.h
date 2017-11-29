@@ -12,7 +12,7 @@ typedef struct
 
 typedef struct 
 {
-	unsigned long freq;
+	unsigned int freq;
 	int pos;
 } FREQ_POS;
 
@@ -24,5 +24,11 @@ typedef struct
 	int parent_pos;
 } HUFFMAN_LEAF;
 
+typedef struct 
+{
+	unsigned char source;
+	HUFFMAN_MAP map;
+} HUFFMAN_MAP_D;
+
 int encode(unsigned char*, unsigned char*);
-void decode(unsigned int, HUFFMAN_MAP*, unsigned char*, unsigned char*);
+int decode(unsigned char*, unsigned char*);
