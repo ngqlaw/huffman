@@ -7,28 +7,27 @@
 typedef struct 
 {
 	unsigned char len;
-	unsigned int symbol;
+	unsigned char *symbol;
 } HUFFMAN_MAP;
 
-typedef struct 
+typedef struct huffman_tree
 {
-	unsigned int freq;
-	int pos;
-} FREQ_POS;
-
-typedef struct 
-{
-	FREQ_POS value;
-	bool is_leaf;
-	bool is_right;
-	int parent_pos;
-} HUFFMAN_LEAF;
-
-typedef struct 
-{
-	unsigned char source;
-	HUFFMAN_MAP map;
-} HUFFMAN_MAP_D;
+	unsigned char is_leaf;
+	struct huffman_tree *parent;
+	union
+	{
+		unsigned char symbol;
+		unsigned long freq;
+	};
+	union
+	{
+		struct
+		{
+			struct huffman_tree *left_point, *right_point;
+		};
+		unsigned char is_right;
+	};
+} HUFFMAN_TREE_NODE;
 
 int encode(unsigned char*, unsigned char*);
 int decode(unsigned char*, unsigned char*);

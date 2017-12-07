@@ -2,7 +2,7 @@
 
 ## 文件格式
 ```
-table_length(32bit) + source_bytes(32bit) + table + codes
+table_length(32bits) + source_bytes(32bits) + table + codes
 
 table_length : 编码数量
 source_bytes : 源值总字节数
@@ -12,7 +12,7 @@ codes        : 编码
 
 ## 编码表格式
 ```
-source(8bit) + length(8bit) + code(32bit)
+source(8bits) + length(no less than 8bits) + code(no less than 8bits)
 ...
 ...
 ...

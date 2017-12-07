@@ -1,52 +1,120 @@
 #include "huffman.h"
 
-void sort(value, values, len)
-FREQ_POS* values;
-FREQ_POS value;
-unsigned int len;
+unsigned char * reverse_bits(bits, len, p)
+unsigned char *bits, len, p;
 {
-	FREQ_POS temp;
-	unsigned int i;
-	for (i = 0; i < len; ++i)
+	unsigned char c, *new;
+	int i, j, k, u;
+
+	new = malloc(len*sizeof(unsigned char));
+	j = 0;
+	new[0] = 0;
+	u = 0;
+	k = p;
+	for (i = len - 1; i > -1; --i)
 	{
-		if (value.freq > values[i].freq)break;
+		c = bits[i];
+		while(k > 0)
+		{
+			new[j] = (new[j] << 1) | (c & 1);
+			c >>= 1;
+			--k;
+			++u;
+			if(u == 8)
+			{
+				++j;
+				new[j] = 0;
+				u = 0;
+			}
+		}
+		k = 8;
 	}
-	for (; i < len; ++i)
-	{
-		temp = values[i];
-		values[i] = value;
-		value = temp;
-	}
-	values[i] = value;
+	if(u > 0)new[j] <<= (8 - u);
+	free(bits);
+	return new;
 }
 
-/*读取文件内容,生成源码频次表,单个源码长度8bits*/
-unsigned int read(filename, length, freq)
+/*释放映射内存*/
+void release_map(map)
+HUFFMAN_MAP *map;
+{
+	int i;
+	for (i = 0; i < 256; ++i)
+	{
+		if (map[i].len > 0 && map[i].symbol != NULL)
+			free(map[i].symbol);
+	}
+}
+
+/*编码释放huffman树内存*/
+void release_encode_tree(tree)
+HUFFMAN_TREE_NODE *tree;
+{
+	int i, j, k;
+	HUFFMAN_TREE_NODE *p[256], *next;
+
+	/*收集动态内存*/
+	k = 0;
+	for (i = 0; i < 256; ++i)
+	{
+		if( (next = tree[i].parent) == NULL )continue;
+		while (next != NULL)
+		{
+			for (j = 0; j < k; ++j)
+			{
+				if(next == p[j])break;
+			}
+			if(j == k)
+			{
+				p[k] = next;
+				++k;
+			}
+			next = next->parent;
+		}
+	}
+	/*释放指向的动态内存*/
+	for (i = 0; i < k; ++i)
+	{
+		if(p[i] != NULL)free(p[i]);
+	}
+}
+
+/*解码释放huffman树内存*/
+void release_decode_tree(tree)
+HUFFMAN_TREE_NODE *tree;
+{
+	while(tree->left_point != NULL)
+	{
+		release_decode_tree(tree->left_point);
+		tree->left_point = NULL;
+	}
+	while(tree->right_point != NULL)
+	{
+		release_decode_tree(tree->right_point);
+		tree->right_point = NULL;
+	}
+	free(tree);
+}
+
+/*读取文件内容,单个源码长度8bits*/
+unsigned int read_for_encode(filename, tree)
 char* filename;
-unsigned int* length;
-FREQ_POS* freq;
+HUFFMAN_TREE_NODE* tree;
 {
 	FILE* file;
 	unsigned char cache;
-	FREQ_POS temp_freq[256];
-  unsigned int i,total;
+  unsigned int total;
   int res;
 
   if( (file = fopen(filename, "rb")) == NULL ){
+  	printf("fail to read file!\n");
 		return 0;
 	}
-  /*初始化*/
-  for (i = 0; i < 256; ++i)
-  {
-  	temp_freq[i].freq = 0;
-  	temp_freq[i].pos = i;
-  	freq[i].freq = 0;
-  	freq[i].pos = 0;
-  }
+  /*读取内容*/
   total = 0;
 	while( (res = fgetc(file)) != EOF ){
 		cache = (unsigned char)res;
-		++(temp_freq[cache].freq);
+		++(tree[cache].freq);
 		++total;
 	}
 	if (ferror(file))
@@ -55,161 +123,83 @@ FREQ_POS* freq;
 		return 0;
 	}
 	fclose(file);
-	/*初始化排序频次, 按照频率排序(低频在高位)*/
-	*length = 0;
-	for (i = 0; i < 256; ++i)
-	{
-		if (temp_freq[i].freq > 0)
-		{
-			sort(temp_freq[i], freq, *length);
-			++(*length);
-		}
-	}
 	return total;
 }
 
-unsigned int get_num(unsigned int len)
+int encode_table(tree)
+HUFFMAN_TREE_NODE* tree;
 {
-	unsigned int temp = 0;
-	while(1){
-		temp += len;
-		if (len == 1)break;
-		if ( (len % 2) != 0 )
-			len = len / 2 + 1;
-		else
-			len = len / 2;
-	}
-	return temp;
-}
+	unsigned int i;
+	HUFFMAN_TREE_NODE *cache, *p_min1, *p_min2;
 
-/*按位反序*/
-unsigned int reverse_bits(value, len)
-unsigned int value, len;
-{
-	unsigned int i, temp = 0;
-	for (i = 0; i < len; ++i)
+	/*构造Huffman树*/
+	while(1)
 	{
-		temp |= ((value >> i) & 0x01) << (len - i - 1);
-	}
-	return temp;
-}
-
-/*生成Huffman编码*/
-void generate_huffman_code(leaf, leafs, len, map)
-HUFFMAN_LEAF leaf;
-HUFFMAN_LEAF* leafs;
-unsigned int len;
-HUFFMAN_MAP* map;
-{
-	unsigned int i, j, k = 0, symbol = 0, next_pos = leaf.parent_pos;
-	if (leaf.is_right) 
-		j = 0;
-	else 
-		j = 1;
-	while(1){
-		for (i = 0; i < len; ++i)
+		p_min1 = NULL;
+		p_min2 = NULL;
+		for (i = 0; i < 256; ++i)
 		{
-			if (leafs[i].value.pos == next_pos)
+			if(tree[i].freq > 0)
 			{
-				symbol = (symbol << 1) + j;
-				++k;
-				if (leafs[i].is_right) 
-					j = 0;
-				else 
-					j = 1;
-				next_pos = leafs[i].parent_pos;
-				break;
+				cache = tree + i;
+				while(cache->parent != NULL)
+				{
+					cache = cache->parent;
+				}
+				if(p_min1 != NULL && p_min1 != cache)
+				{
+					if(p_min1->freq > cache->freq)
+					{
+						p_min2 = p_min1;
+						p_min1 = cache;
+					}
+					else 
+					{
+						if(p_min2 != NULL)
+						{
+							if(p_min2->freq > cache->freq)
+								p_min2 = cache;
+						}
+						else
+							p_min2 = cache;
+					}
+				}
+				else if(p_min1 == NULL)
+					p_min1 = cache;
 			}
 		}
-		if(i == len)break;
-	}
-	map->len = k;
-	map->symbol = reverse_bits(symbol, k);
-}
-
-void encode_table(length, freq, map)
-unsigned int length;
-FREQ_POS* freq;
-HUFFMAN_MAP* map;
-{
-	unsigned int num, i, j, k;
-	int gen_pos = -1;
-	FREQ_POS temp_freq;
-	HUFFMAN_LEAF* leafs;
-
-	/*定义最长Huffman树*/
-	num = get_num(length);
-	leafs = malloc((num + 1) * sizeof(HUFFMAN_LEAF));
-	/*构造Huffman树*/
-	i = length - 1;
-	j = 0;
-	while(i > 0){
-		/*Huffman树左节点*/
-		leafs[j].value.freq = freq[i].freq;
-		leafs[j].value.pos = freq[i].pos;
-		leafs[j].parent_pos = gen_pos;
-		leafs[j].is_right = false;
-		if(freq[i].pos >= 0)
-			leafs[j].is_leaf = true;
-		else
-			leafs[j].is_leaf = false;
-		/*Huffman树右节点*/
-		leafs[j + 1].value.freq = freq[i - 1].freq;
-		leafs[j + 1].value.pos = freq[i - 1].pos;
-		leafs[j + 1].parent_pos = gen_pos;
-		leafs[j + 1].is_right = true;
-		if(freq[i - 1].pos >= 0)
-			leafs[j + 1].is_leaf = true;
-		else
-			leafs[j + 1].is_leaf = false;
-		/*给新构造的频次映射点排序*/
-		temp_freq.freq = freq[i].freq + freq[i - 1].freq;
-		temp_freq.pos = gen_pos;
-		sort(temp_freq, freq, i - 1);
-
-		--gen_pos;
-		j+=2;
-		--i;
-	}
-	/*根节点*/
-	leafs[j].value.freq = freq[i].freq;
-	leafs[j].value.pos = freq[i].pos;
-	leafs[j].parent_pos = gen_pos;
-	leafs[j].is_right = false;
-	if(freq[i].pos >= 0)
-		leafs[j].is_leaf = true;
-	else
-		leafs[j].is_leaf = false;
-	/*生成Huffman表*/
-	k = j + 1;
-	j = 0;
-	for (i = 0; i < 256; ++i)
-	{
-		map[i].len = 0;
-		map[i].symbol = 0;
-	}
-	for (i = 0; i < k; ++i)
-	{
-		/*生成一个映射*/
-		if (leafs[i].is_leaf)
+		if(p_min1 != NULL && p_min2 != NULL)
 		{
-			generate_huffman_code(leafs[i], leafs, k, map + leafs[i].value.pos);
-			++j;
+			cache = malloc(sizeof(HUFFMAN_TREE_NODE));
+			cache->is_leaf = 0;
+			cache->freq = p_min1->freq + p_min2->freq;
+			cache->parent = NULL;
+			p_min1->is_right = 1;
+			p_min1->parent = cache;
+			p_min2->is_right = 0;
+			p_min2->parent = cache;
 		}
+		else if(p_min1 != NULL)
+		{
+			cache = p_min1;
+			return 0; 
+		}
+		else
+			return -1;
 	}
-	free(leafs);
 }
 
-int encode_file(infilename, total, length, map, outfilename)
+int encode_file(infilename, total, length, tree, outfilename)
 char *infilename, *outfilename;
 unsigned int total, length;
-HUFFMAN_MAP* map;
+HUFFMAN_TREE_NODE* tree;
 {
 	FILE *infile, *outfile;
-	unsigned char source, cache[128], p;
-  unsigned int i, j, k, temp, mask, symbol;
-  unsigned char *map_cache;
-  int res;
+	unsigned char source, cache[128], p1, p2, symbol, *bits;
+  unsigned int temp, mask;
+  int i, j, k, p, res;
+  HUFFMAN_TREE_NODE *pt; 
+  HUFFMAN_MAP map[256];
 
   if( (infile = fopen(infilename, "rb")) == NULL ){
 		return -1;
@@ -223,257 +213,128 @@ HUFFMAN_MAP* map;
 	temp = htonl(total);
 	fwrite(&temp, sizeof(unsigned int), 1, outfile);
 	/*写入huffman表*/
-	k = length * (sizeof(unsigned int) + 2) + 1;
-	map_cache = malloc(k);
-	memset(map_cache, 0, k);
-	j = 0;
 	for (i = 0; i < 256; ++i)
 	{
+		map[i].len = 0;
+		if(tree[i].parent == NULL)continue;
+		/*生成映射*/
+		pt = tree + i;
+		bits = malloc(sizeof(unsigned char));
+		p1 = 0;
+		p2 = 0;
+		bits[p2] = 0;
+		k = 0;
+		while(1)
+		{
+			bits[p2] = (bits[p2] << 1) | pt->is_right;
+			++p1;
+			++k;
+			if( (pt = pt->parent) == NULL)break;
+			if(p1 == 8)
+			{
+				++p2;
+				bits = realloc(bits, (p2 + 1)*sizeof(unsigned char));
+				bits[p2] = 0;
+				p1 = 0;
+			}
+		}
+		p2 = p1 > 0 ? ++p2 : p2;
+		map[i].len = k;
+		map[i].symbol = reverse_bits(bits, p2, p1);
+		/*写入*/
 		if(map[i].len > 0)
 		{
-			map_cache[j] = i;
-			map_cache[j + 1] = map[i].len;
-			temp = htonl(map[i].symbol);
-			memcpy(map_cache + j + 2, &temp, sizeof(unsigned int));
-			j += sizeof(unsigned int) + 2;
+			cache[0] = i;
+			cache[1] = map[i].len;
+			j = 0;
+			k = map[i].len;
+			while (k > 0)
+			{
+				cache[2 + j] = map[i].symbol[j];
+				k -= 8;
+				++j;
+			}
+			fwrite(cache, sizeof(unsigned char), j + 2, outfile);
 		}
 	}
-	fwrite(map_cache, sizeof(unsigned char), j, outfile);
-	free(map_cache);
 	/*写入编码*/
-	j = 0;
-	p = 8;
+	i = 0;
+	p1 = 8;
 	cache[0] = 0;
 	while( (res = fgetc(infile)) != EOF )
 	{
 		source = (unsigned char)res;
 		/*字节写入*/
 		k = map[source].len;
-		symbol = map[source].symbol;
+		p = 0;
+		p2 = (k >= 8) ? 8 : k;
+		symbol = map[source].symbol[0];
 		while(k > 0)
 		{
-			if (p > k)
+			if (p1 > p2)
 			{
 				/* 不能补全字节 */
-				p -= k;
-				cache[j] = cache[j] | (symbol << p);
-				break;
+				cache[i] = cache[i] | (symbol >> (8 - p1));
+				p1 -= p2;
+				k -= p2;
+				if (k > 0)
+				{
+					++p;
+					p2 = (k >= 8) ? 8 : k;
+					symbol = map[source].symbol[p];
+				}
 			}
-			else if (p < k)
+			else if (p1 < p2)
 			{
 				/* 超出字节 */
-				k -= p;
-				cache[j] = cache[j] | (symbol >> k);
-				mask = 0;
-				for (i = 0; i < k; ++i)
-				{
-					mask = (mask << 1) | 1;
-				}
-				symbol = symbol & mask;
-				++j;
-				if(j == 127)
+				p2 -= p1;
+				k -= p1;
+				cache[i] = cache[i] | (symbol >> (8 - p1));
+				symbol = (symbol << p1) & 255;
+				++i;
+				if(i == 127)
 				{
 					fwrite(cache, sizeof(unsigned char), 127, outfile);
-					j = 0;
+					i = 0;
 				}
-				p = 8;
-				cache[j] = 0;
+				p1 = 8;
+				cache[i] = 0;
 			}
 			else
 			{
 				/* 整字节 */
-				cache[j] = cache[j] | symbol;
-				++j;
-				if(j == 127)
+				k -= p2;
+				cache[i] = cache[i] | (symbol >> (8 - p1));
+				++i;
+				if(i == 127)
 				{
 					fwrite(cache, sizeof(unsigned char), 127, outfile);
-					j = 0;
+					i = 0;
 				}
-				p = 8;
-				cache[j] = 0;
-				break;
-			}
-		}
-	}
-	if (ferror(infile))
-	{
-		printf("fail to read file!\n");
-		fclose(outfile);
-		return -1;
-	}
-	if(p > 0) ++j;
-	fwrite(cache, sizeof(unsigned char), j, outfile);
-	fclose(outfile);
-	fclose(infile);
-	return 0;
-}
-
-int read_decode_file(file, cache, length)
-FILE *file;
-unsigned char *cache;
-unsigned int length;
-{
-	unsigned int i;
-	int res;
-
-	i = 0;
-	while( (res = fgetc(file)) != EOF )
-	{
-		cache[i] = (unsigned char)res;
-		++i;
-		if(i == length)break;
-	}
-	if (ferror(file))
-	{
-		printf("fail to read file!\n");
-		return -1;
-	}
-	else if (feof(file))
-	{
-		if(i == 0)
-		{
-			return -2;
-		}
-	}
-	return i;
-}
-
-int decode(infilename, outfilename)
-unsigned char *infilename, *outfilename;
-{
-	FILE *infile, *outfile;
-	unsigned int i, j, k, total, length, temp, mask, byte_cache;
-	unsigned char line[128], cache[128], p;
-	int res;
-	HUFFMAN_MAP_D *d_map, map_cache, temp_map;
-
-	if( (infile = fopen(infilename, "rb")) == NULL ){
-		printf("fail to open file:%s!\n", infilename);
-		return -1;
-	}
-	/*初始化表长度和信息长度*/
-	if ( (res = read_decode_file(infile, line, 2 * sizeof(unsigned int))) <= 0 )
-	{
-		printf("read file fail:%d\n", res);
-		return -1;
-	}
-	length = 0;
-	p = sizeof(unsigned int);
-	for(i = 0; i < p; ++i)
-	{
-		temp = line[i];
-		length += temp << (8*(p - i - 1));
-	}
-	total = 0;
-	p = 2 * sizeof(unsigned int);
-	for(; i < p; ++i)
-	{
-		temp = line[i];
-		total += temp << (8*(p - i - 1));
-	}
-	if (total == 0 || length == 0){
-		printf("error file format!\n");
-		fclose(infile);
-		return -2;
-	}
-	/*初始化huffman编码表*/
-	d_map = malloc(sizeof(HUFFMAN_MAP_D) * (length + 1));
-	for (i = 0; i < length; ++i)
-	{
-		/*读取一个映射*/
-		if ( (res = read_decode_file(infile, line, sizeof(unsigned int) + 2)) <= 0 )
-		{
-			printf("read file fail:%d\n", res);
-			free(d_map);
-			return -1;
-		}
-		map_cache.source = line[0];
-		map_cache.map.len = line[1];
-		map_cache.map.symbol = 0;
-		for(j = 2; j < 2 + sizeof(unsigned int); ++j)
-		{
-			temp = line[j];
-			map_cache.map.symbol += temp << (8*(sizeof(unsigned int) + 1 - j));
-		}
-		/*排序编码表(按编码有效长度从小到大)*/
-		for (j = 0; j < i; ++j)
-		{
-			if (map_cache.map.len < d_map[j].map.len)break;
-		}
-		for (; j < i; ++j)
-		{
-			temp_map = d_map[j];
-			d_map[j] = map_cache;
-			map_cache = temp_map;
-		}
-		d_map[j] = map_cache;
-	}
-	/*解码*/
-	if( (outfile = fopen(outfilename, "wb")) == NULL ){
-		printf("fail to open file:%s!\n", outfilename);
-		free(d_map);
-		fclose(infile);
-		return -1;
-	}
-	p = 0;
-	k = 0; 
-	byte_cache = 0; 
-	while((res = fgetc(infile)) != EOF)
-	{
-		if (total == 0)break;
-		byte_cache = (byte_cache << 8) + res;
-		p += 8;
-		while(p > 0)
-		{
-			temp = 0;
-			for (i = 0; i < length; ++i)
-			{
-				if (d_map[i].map.len > p)break;
-				else
+				p1 = 8;
+				cache[i] = 0;
+				if (k > 0)
 				{
-					if( d_map[i].map.symbol == (byte_cache >> (p - d_map[i].map.len)) )
-					{
-						cache[k] = d_map[i].source;
-						p -= d_map[i].map.len;
-						mask = 0;
-						for (j = 0; j < p; ++j)
-						{
-							mask = (mask << 1) | 1;
-						}
-						byte_cache = byte_cache & mask;
-						++k;
-						--total;
-						temp = 1;
-						break;
-					}
+					++p;
+					p2 = (k >= 8) ? 8 : k;
+					symbol = map[source].symbol[p];
 				}
 			}
-			if (k == 127)
-			{
-				fwrite(cache, sizeof(unsigned char), 127, outfile);
-				k = 0;
-			}
-			if (i == length)
-			{
-				printf("unknown code:%d\n", mask);
-				free(d_map);
-				fclose(outfile);
-				fclose(infile);
-				return -2;
-			}
-			if(temp == 0 || total == 0)break;
-		}	
+		}
 	}
-	free(d_map);
 	if (ferror(infile))
 	{
 		printf("fail to read file!\n");
 		fclose(outfile);
+		release_map(map);
 		return -1;
 	}
-	if(k > 0)fwrite(cache, sizeof(unsigned char), k, outfile);
+	if(p1 > 0) ++i;
+	fwrite(cache, sizeof(unsigned char), i, outfile);
 	fclose(outfile);
 	fclose(infile);
+	/*释放映射内存*/
+	release_map(map);
 	return 0;
 }
 
@@ -481,20 +342,218 @@ int encode(infilename, outfilename)
 unsigned char *infilename, *outfilename;
 {
 	unsigned int i, total, length;
-	FREQ_POS freq[256];
-	HUFFMAN_MAP map[256];
+	int res;
+	HUFFMAN_TREE_NODE tree[256];
 
 	/*生成频次表*/
-	if( (total = read(infilename, &length, freq)) == 0 ){
-		printf("read file fail!\n");
+  for (i = 0; i < 256; ++i)
+  {
+  	tree[i].is_leaf = 1;
+  	tree[i].freq = 0;
+  	tree[i].parent = NULL;
+  	tree[i].is_right = 0;
+  }
+	if( (total = read_for_encode(infilename, tree)) == 0 ){
 		return -1;
 	}
+	length = 0;
+	for (i = 0; i < 256; ++i)
+	{
+		if(tree[i].freq > 0)
+			++length;
+	}
 	/*Huffman索引*/
-	encode_table(length, freq, map);
-	/*生成Huffman编码后的文件*/
-	if( encode_file(infilename, total, length, map, outfilename) != 0){
-		printf("encode file fail!\n");
+	if(encode_table(tree) != 0)
+	{
+		printf("generate huffman tree fail!\n");
+		release_encode_tree(tree);
 		return -2;
 	}
+	/*生成Huffman编码后的文件*/
+	if( (res = encode_file(infilename, total, length, tree, outfilename)) != 0){
+		printf("encode file fail!\n");
+	}
+	/*释放动态内存*/
+	release_encode_tree(tree);
+	return res;
+}
+
+HUFFMAN_TREE_NODE *new_decode_node(parent)
+HUFFMAN_TREE_NODE *parent;
+{
+	HUFFMAN_TREE_NODE *node;
+
+	node = malloc(sizeof(HUFFMAN_TREE_NODE));
+	/*初始化*/
+	node->symbol = 0;
+	node->is_leaf = 0;
+	node->parent = parent;
+	node->right_point = NULL;
+	node->left_point = NULL;
+	return node;
+}
+
+unsigned char generate_huffman_tree(tree, source, res, p)
+HUFFMAN_TREE_NODE **tree;
+unsigned char source, res, p;
+{
+	unsigned char i, is_right;
+	HUFFMAN_TREE_NODE *next;
+
+	next = *tree;
+	for (i = 0; i < 8; ++i)
+	{
+		is_right = ((128 & res) == 128 ) ? 1 : 0;
+		if(is_right == 1)
+		{
+			if(next->right_point == NULL)
+				next->right_point = new_decode_node(next);
+			next = next->right_point;
+		}
+		else
+		{
+			if(next->left_point == NULL)
+				next->left_point = new_decode_node(next);
+			next = next->left_point;
+		}
+		--p;
+		if(p == 0)
+		{
+			next->symbol = source;
+			next->is_leaf = 1;
+			break;
+		}
+		res <<= 1;
+	}
+	*tree = next;
+	return p;
+}
+
+int decode(infilename, outfilename)
+unsigned char *infilename, *outfilename;
+{
+	FILE *infile, *outfile;
+	unsigned int i, j, k, total, length, is_right;
+	unsigned char line[128], byte_cache, p;
+	int res;
+	HUFFMAN_TREE_NODE *tree, **root, *next, cache;
+
+	if( (infile = fopen(infilename, "rb")) == NULL ){
+		printf("fail to open file:%s!\n", infilename);
+		return -1;
+	}
+	/*初始化表长度和信息长度*/
+	length = 0;
+	total = 0;
+	p = 2 * sizeof(unsigned int);
+	i = 0;
+	j = sizeof(unsigned int);
+	while( i < p && ((res = fgetc(infile)) != EOF) )
+	{
+		if ( i < j ) 
+			length += res << (8 * (j - i - 1));
+		else
+			total += res << (8 * (p - i - 1));
+		++i;
+	}
+	if (ferror(infile))
+	{
+		printf("read file fail:%d\n", res);
+		return -1;
+	}
+	else if (feof(infile))
+	{
+		return 0;
+	}
+	if (total == 0 || length == 0){
+		printf("error file format!\n");
+		fclose(infile);
+		return -2;
+	}
+	/*初始化huffman编码表*/
+	tree = new_decode_node(NULL);
+	root = &tree;
+	next = *root;
+	for (i = 0; i < length; ++i)
+	{
+		/*读取一个映射*/
+		j = 0;
+		p = 1;
+		while( (res = fgetc(infile)) != EOF )
+		{
+			if(j == 0)
+			{
+				byte_cache = res;
+			}
+			else if(j == 1)
+			{
+				p = res;
+			}
+			else
+			{
+				p = generate_huffman_tree(&next, byte_cache, res, p);
+			}
+			if(p <= 0)
+			{
+				next = *root;
+				break;
+			}
+			++j;
+		}
+		if (ferror(infile))
+		{
+			printf("read file fail:%d\n", res);
+			/*释放内存*/
+			release_decode_tree(tree);
+			return -1;
+		}
+	}
+	/*解码*/
+	if( (outfile = fopen(outfilename, "wb")) == NULL ){
+		printf("fail to open file:%s!\n", outfilename);
+		/*释放内存*/
+		release_decode_tree(tree);
+		fclose(infile);
+		return -1;
+	}
+	k = 0;
+	next = *root; 
+	while((res = fgetc(infile)) != EOF)
+	{
+		if (total == 0)break;
+		p = 8;
+		byte_cache = res;
+		while(p > 0)
+		{
+			is_right = ((128 & byte_cache) == 128 ) ? 1 : 0;
+			next = (is_right == 1) ? next->right_point : next->left_point;
+			if(next->is_leaf == 1)
+			{
+				line[k] = next->symbol;
+				++k;
+				if (k == 127)
+				{
+					fwrite(line, sizeof(unsigned char), 127, outfile);
+					k = 0;
+				}
+				--total;
+				if(total == 0)break;
+				next = *root;
+			}
+			--p;
+			byte_cache <<= 1;
+		}	
+	}
+	if (ferror(infile))
+	{
+		printf("fail to read file!\n");
+		fclose(outfile);
+		return -1;
+	}
+	if(k > 0)fwrite(line, sizeof(unsigned char), k, outfile);
+	/*释放内存*/
+	release_decode_tree(tree);
+	fclose(outfile);
+	fclose(infile);
 	return 0;
 }
