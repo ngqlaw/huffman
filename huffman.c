@@ -224,12 +224,12 @@ HUFFMAN_TREE_NODE* tree;
 		p2 = 0;
 		bits[p2] = 0;
 		k = 0;
-		while(1)
+		while(pt->parent != NULL)
 		{
 			bits[p2] = (bits[p2] << 1) | pt->is_right;
 			++p1;
 			++k;
-			if( (pt = pt->parent) == NULL)break;
+			pt = pt->parent;
 			if(p1 == 8)
 			{
 				++p2;
@@ -239,6 +239,7 @@ HUFFMAN_TREE_NODE* tree;
 			}
 		}
 		p2 = p1 > 0 ? ++p2 : p2;
+    p1 = (p1 == 0) ? 8 : p1;
 		map[i].len = k;
 		map[i].symbol = reverse_bits(bits, p2, p1);
 		/*写入*/

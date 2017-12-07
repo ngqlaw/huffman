@@ -1,4 +1,5 @@
-# encodern and test
+# huffman
+Huffman learn and test
 
 ## 文件格式
 ```
